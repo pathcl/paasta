@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import argparse
 import datetime
 import json
 from socket import gethostbyname
@@ -27,38 +28,31 @@ from paasta_tools.mesos_tools import MesosMasterConnectionError
 PORT = 5050
 
 
-def add_subparser(subparsers):
-    list_parser = subparsers.add_parser(
-        'maintenance',
-        help="Manipulate the maintenance state of a PaaSTA host.",
-        description=(
-            "'paasta maintenance allows you to drain a host in preparation "
-            "for maintenance, mark it as down when the maintenance begins, and "
-            "bring it back up once the maintenance has concluded."
-        ),
-    )
-    list_parser.add_argument(
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
         '-d', '--duration',
         type=timedelta_type,
         default='1h',
         help="Duration of the maintenance window. Any pytimeparse unit is supported.",
     )
-    list_parser.add_argument(
+    parser.add_argument(
         '-s', '--start',
         default=now(),
         help="Time to start the maintenance window. Defaults to now.",
     )
-    list_parser.add_argument(
+    parser.add_argument(
         'action',
         choices=['drain', 'undrain', 'down', 'up', 'status'],
         help="Action to perform on the speicifed hosts",
     )
-    list_parser.add_argument(
+    parser.add_argument(
         'hostname',
         nargs='*',
         help="Hostname(s) of machine(s) to start draining.",
     )
-    list_parser.set_defaults(command=paasta_maintenance)
+    options = parser.parse_args()
+    return options
 
 
 def timedelta_type(value):
@@ -206,9 +200,9 @@ def schedule(leader):
     print "%s:%s" % (schedule, schedule.text)
 
 
-def paasta_maintenance(args):
+def paasta_maintenance():
     """Manipulate the maintenance state of a PaaSTA host."""
-    args = add_subparser()
+    args = parse_args()
 
     action = args.action
     hostnames = args.hostname
@@ -244,3 +238,7 @@ def paasta_maintenance(args):
         schedule(leader)
     else:
         print "Unknown Action: %s" % action
+
+
+if __name__ == '__main__':
+    paasta_maintenance()

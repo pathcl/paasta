@@ -17,17 +17,17 @@ import json
 import mock
 from dateutil import tz
 
-from paasta_tools.cli.cmds.maintenance import build_start_maintenance_payload
-from paasta_tools.cli.cmds.maintenance import datetime_seconds_from_now
-from paasta_tools.cli.cmds.maintenance import datetime_to_nanoseconds
-from paasta_tools.cli.cmds.maintenance import get_machine_ids
-from paasta_tools.cli.cmds.maintenance import get_maintenance_schedule
-from paasta_tools.cli.cmds.maintenance import get_maintenance_status
-from paasta_tools.cli.cmds.maintenance import load_credentials
-from paasta_tools.cli.cmds.maintenance import PORT
-from paasta_tools.cli.cmds.maintenance import seconds_to_nanoseconds
-from paasta_tools.cli.cmds.maintenance import send_payload
-from paasta_tools.cli.cmds.maintenance import timedelta_type
+from paasta_tools.paasta_maintenance import build_start_maintenance_payload
+from paasta_tools.paasta_maintenance import datetime_seconds_from_now
+from paasta_tools.paasta_maintenance import datetime_to_nanoseconds
+from paasta_tools.paasta_maintenance import get_machine_ids
+from paasta_tools.paasta_maintenance import get_maintenance_schedule
+from paasta_tools.paasta_maintenance import get_maintenance_status
+from paasta_tools.paasta_maintenance import load_credentials
+from paasta_tools.paasta_maintenance import PORT
+from paasta_tools.paasta_maintenance import seconds_to_nanoseconds
+from paasta_tools.paasta_maintenance import send_payload
+from paasta_tools.paasta_maintenance import timedelta_type
 
 
 def test_timedelta_type_one():
@@ -38,7 +38,7 @@ def test_timedelta_type():
     assert timedelta_type(value='1 hour') == 3600 * 1000000000
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.now')
+@mock.patch('paasta_tools.paasta_maintenance.now')
 def test_datetime_seconds_from_now(
     mock_now,
 ):
@@ -57,7 +57,7 @@ def test_datetime_to_nanoseconds():
     assert datetime_to_nanoseconds(dt) == expected
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.gethostbyname')
+@mock.patch('paasta_tools.paasta_maintenance.gethostbyname')
 def test_build_start_maintenance_payload(
     mock_gethostbyname,
 ):
@@ -69,7 +69,7 @@ def test_build_start_maintenance_payload(
     assert build_start_maintenance_payload(hostnames) == get_machine_ids(hostnames)
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.gethostbyname')
+@mock.patch('paasta_tools.paasta_maintenance.gethostbyname')
 def test_get_machine_ids_one_host(
     mock_gethostbyname,
 ):
@@ -86,7 +86,7 @@ def test_get_machine_ids_one_host(
     assert get_machine_ids(hostnames) == expected
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.gethostbyname')
+@mock.patch('paasta_tools.paasta_maintenance.gethostbyname')
 def test_get_machine_ids_multiple_hosts(
     mock_gethostbyname,
 ):
@@ -144,7 +144,7 @@ def test_build_maintenance_schedule_payload():
     pass
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.open', create=True)
+@mock.patch('paasta_tools.paasta_maintenance.open', create=True)
 def test_load_credentials(
     mock_open,
 ):
@@ -162,8 +162,8 @@ def test_load_credentials(
     assert load_credentials() == ('username', 'password')
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.requests.get')
-@mock.patch('paasta_tools.cli.cmds.maintenance.load_credentials')
+@mock.patch('paasta_tools.paasta_maintenance.requests.get')
+@mock.patch('paasta_tools.paasta_maintenance.load_credentials')
 def test_get_maintenance_status(
     mock_load_credentials,
     mock_get,
@@ -178,8 +178,8 @@ def test_get_maintenance_status(
     assert mock_get.call_args == mock.call(url, auth=credentials, timeout=15)
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.requests.get')
-@mock.patch('paasta_tools.cli.cmds.maintenance.load_credentials')
+@mock.patch('paasta_tools.paasta_maintenance.requests.get')
+@mock.patch('paasta_tools.paasta_maintenance.load_credentials')
 def test_get_maintenance_schedule(
     mock_load_credentials,
     mock_get,
@@ -194,8 +194,8 @@ def test_get_maintenance_schedule(
     assert mock_get.call_args == mock.call(url, auth=credentials, timeout=15)
 
 
-@mock.patch('paasta_tools.cli.cmds.maintenance.requests.post')
-@mock.patch('paasta_tools.cli.cmds.maintenance.load_credentials')
+@mock.patch('paasta_tools.paasta_maintenance.requests.post')
+@mock.patch('paasta_tools.paasta_maintenance.load_credentials')
 def test_send_payload(
     mock_load_credentials,
     mock_post,
