@@ -17,9 +17,10 @@ import datetime
 import json
 from socket import gethostbyname
 
-import requests
 from dateutil import tz
 from pytimeparse import timeparse
+from requests import Request
+from requests import Session
 
 from paasta_tools.mesos_tools import get_mesos_leader
 from paasta_tools.mesos_tools import MesosMasterConnectionError
@@ -53,6 +54,58 @@ def parse_args():
     )
     options = parser.parse_args()
     return options
+
+
+def base_api():
+    leader = get_mesos_leader()
+
+    def execute_request(method, endpoint, **kwargs):
+        url = "http://%s:%d/%s" % (leader, PORT, endpoint)
+        timeout = 15
+        s = Session()
+        req = Request(method, url, **kwargs)
+        prepared = s.prepare_request(req)
+        try:
+            resp = s.send(prepared,
+                          timeout=timeout,
+                          auth=load_credentials(),
+                          )
+            resp.raise_for_status()
+        except Exception as e:
+            print("Error executing API request calling %s. Got response code %d with error %s" %
+                  (endpoint, resp.status_code, e))
+    return execute_request
+
+
+def master_api():
+    def execute_master_api_request(method, endpoint, **kwargs):
+        base_api_client = base_api()
+        return base_api_client(method, "master/%s" % endpoint, **kwargs)
+    return execute_master_api_request
+
+
+def maintenance_api():
+    def execute_schedule_api_request(method, endpoint, **kwargs):
+        master_api_client = master_api()
+        return master_api_client(method, "maintenance/%s" % endpoint, **kwargs)
+    return execute_schedule_api_request
+
+
+def get_schedule_client():
+    def execute_schedule_api_request(method, endpoint, **kwargs):
+        maintenance_api_client = maintenance_api()
+        return maintenance_api_client(method, "schedule/%s" % endpoint, **kwargs)
+    return execute_schedule_api_request
+
+
+def get_maintenance_schedule():
+    client_fn = get_schedule_client()
+    return client_fn(method="GET", endpoint="")
+
+
+def get_maintenance_status():
+    client_fn = get_schedule_client()
+    return client_fn(method="GET", endpoint="status")
 
 
 def timedelta_type(value):
@@ -101,8 +154,8 @@ def get_machine_ids(hostnames):
     return machine_ids
 
 
-def build_maintenance_schedule_payload(leader, hostnames, start, duration, drain=True):
-    schedule = get_maintenance_schedule(leader).json()
+def build_maintenance_schedule_payload(hostnames, start, duration, drain=True):
+    schedule = get_maintenance_schedule().json()
     machine_ids = get_machine_ids(hostnames)
 
     unavailability = dict()
@@ -126,27 +179,15 @@ def build_maintenance_schedule_payload(leader, hostnames, start, duration, drain
             windows = schedule['windows'] + [window]
         else:
             windows = schedule['windows']
-    else:
+    elif drain:
         windows = [window]
+    else:
+        windows = []
 
     payload = dict()
     payload['windows'] = windows
 
     return payload
-
-
-def get_maintenance_status(leader):
-    credentials = load_credentials()
-    endpoint = '/master/maintenance/status'
-    url = "http://%s:%s%s" % (leader, PORT, endpoint)
-    return requests.get(url, auth=credentials, timeout=15)
-
-
-def get_maintenance_schedule(leader):
-    credentials = load_credentials()
-    endpoint = '/master/maintenance/schedule'
-    url = "http://%s:%s%s" % (leader, PORT, endpoint)
-    return requests.get(url, auth=credentials, timeout=15)
 
 
 def load_credentials(mesos_secrets='/nail/etc/mesos-secrets'):
@@ -157,46 +198,37 @@ def load_credentials(mesos_secrets='/nail/etc/mesos-secrets'):
     return username, password
 
 
-def send_payload(url, payload):
-    credentials = load_credentials()
-    return requests.post(url, data=json.dumps(payload), auth=credentials, timeout=15)
+def drain(hostnames, start, duration):
+    payload = build_maintenance_schedule_payload(hostnames, start, duration, drain=True)
+    client_fn = get_schedule_client()
+    print client_fn(method="POST", endpoint="", data=json.dumps(payload)).text
 
 
-def drain(leader, hostnames, start, duration):
-    payload = build_maintenance_schedule_payload(leader, hostnames, start, duration, drain=True)
-    endpoint = '/master/maintenance/schedule'
-    url = "http://%s:%s%s" % (leader, PORT, endpoint)
-    print send_payload(url, payload).text
+def undrain(hostnames, start, duration):
+    payload = build_maintenance_schedule_payload(hostnames, start, duration, drain=False)
+    client_fn = get_schedule_client()
+    print client_fn(method="POST", endpoint="", data=json.dumps(payload)).text
 
 
-def undrain(leader, hostnames, start, duration):
-    payload = build_maintenance_schedule_payload(leader, hostnames, start, duration, drain=False)
-    endpoint = '/master/maintenance/schedule'
-    url = "http://%s:%s%s" % (leader, PORT, endpoint)
-    print send_payload(url, payload).text
-
-
-def down(leader, hostnames):
+def down(hostnames):
     payload = build_start_maintenance_payload(hostnames)
-    endpoint = '/master/machine/down'
-    url = "http://%s:%s%s" % (leader, PORT, endpoint)
-    print send_payload(url, payload).text
+    client_fn = master_api()
+    print client_fn(method="POST", endpoint="machine/down", data=json.dumps(payload)).text
 
 
-def up(leader, hostnames):
+def up(hostnames):
     payload = build_start_maintenance_payload(hostnames)
-    endpoint = '/master/machine/up'
-    url = "http://%s:%s%s" % (leader, PORT, endpoint)
-    print send_payload(url, payload).text
+    client_fn = master_api()
+    print client_fn(method="POST", endpoint="machine/up", data=json.dumps(payload)).text
 
 
-def status(leader):
-    status = get_maintenance_status(leader)
+def status():
+    status = get_maintenance_status()
     print "%s:%s" % (status, status.text)
 
 
-def schedule(leader):
-    schedule = get_maintenance_schedule(leader)
+def schedule():
+    schedule = get_maintenance_schedule()
     print "%s:%s" % (schedule, schedule.text)
 
 
@@ -226,16 +258,16 @@ def paasta_maintenance():
     duration = args.duration
 
     if action == 'drain':
-        drain(leader, hostnames, start, duration)
+        drain(hostnames, start, duration)
     elif action == 'undrain':
-        undrain(leader, hostnames, start, duration)
+        undrain(hostnames, start, duration)
     elif action == 'down':
-        down(leader, hostnames)
+        down(hostnames)
     elif action == 'up':
-        up(leader, hostnames)
+        up(hostnames)
     elif action == 'status':
-        status(leader)
-        schedule(leader)
+        status()
+        schedule()
     else:
         print "Unknown Action: %s" % action
 

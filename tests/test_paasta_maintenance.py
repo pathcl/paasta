@@ -13,21 +13,27 @@
 # limitations under the License.
 import datetime
 import json
+from StringIO import StringIO
 
 import mock
 from dateutil import tz
 
+from paasta_tools.paasta_maintenance import build_maintenance_schedule_payload
 from paasta_tools.paasta_maintenance import build_start_maintenance_payload
 from paasta_tools.paasta_maintenance import datetime_seconds_from_now
 from paasta_tools.paasta_maintenance import datetime_to_nanoseconds
+from paasta_tools.paasta_maintenance import down
+from paasta_tools.paasta_maintenance import drain
 from paasta_tools.paasta_maintenance import get_machine_ids
 from paasta_tools.paasta_maintenance import get_maintenance_schedule
 from paasta_tools.paasta_maintenance import get_maintenance_status
 from paasta_tools.paasta_maintenance import load_credentials
-from paasta_tools.paasta_maintenance import PORT
+from paasta_tools.paasta_maintenance import schedule
 from paasta_tools.paasta_maintenance import seconds_to_nanoseconds
-from paasta_tools.paasta_maintenance import send_payload
+from paasta_tools.paasta_maintenance import status
 from paasta_tools.paasta_maintenance import timedelta_type
+from paasta_tools.paasta_maintenance import undrain
+from paasta_tools.paasta_maintenance import up
 
 
 def test_timedelta_type_one():
@@ -140,8 +146,193 @@ def test_get_machine_ids_multiple_hosts_ips():
     assert get_machine_ids(hostnames) == expected
 
 
-def test_build_maintenance_schedule_payload():
-    pass
+@mock.patch('paasta_tools.paasta_maintenance.get_maintenance_schedule')
+@mock.patch('paasta_tools.paasta_maintenance.get_machine_ids')
+def test_build_maintenance_schedule_payload_no_schedule(
+    mock_get_machine_ids,
+    mock_get_maintenance_schedule,
+):
+    mock_get_maintenance_schedule.return_value.json.return_value = {}
+    machine_ids = [{'hostname': 'machine2', 'ip': '10.0.0.2'}]
+    mock_get_machine_ids.return_value = machine_ids
+    hostnames = ['fake-hostname']
+    start = '1443830400000000000'
+    duration = '3600000000000'
+    actual = build_maintenance_schedule_payload(hostnames, start, duration, drain=True)
+    assert mock_get_maintenance_schedule.call_count == 1
+    assert mock_get_machine_ids.call_count == 1
+    assert mock_get_machine_ids.call_args == mock.call(hostnames)
+    expected = {
+        'windows': [
+            {
+                'machine_ids': machine_ids,
+                'unavailability': {
+                    'start': {
+                        'nanoseconds': int(start),
+                    },
+                    'duration': {
+                        'nanoseconds': int(duration),
+                    },
+                },
+            },
+        ],
+    }
+    assert actual == expected
+
+
+@mock.patch('paasta_tools.paasta_maintenance.get_maintenance_schedule')
+@mock.patch('paasta_tools.paasta_maintenance.get_machine_ids')
+def test_build_maintenance_schedule_payload_no_schedule_undrain(
+    mock_get_machine_ids,
+    mock_get_maintenance_schedule,
+):
+    mock_get_maintenance_schedule.return_value.json.return_value = {}
+    machine_ids = [{'hostname': 'machine2', 'ip': '10.0.0.2'}]
+    mock_get_machine_ids.return_value = machine_ids
+    hostnames = ['fake-hostname']
+    start = '1443830400000000000'
+    duration = '3600000000000'
+    actual = build_maintenance_schedule_payload(hostnames, start, duration, drain=False)
+    assert mock_get_maintenance_schedule.call_count == 1
+    assert mock_get_machine_ids.call_count == 1
+    assert mock_get_machine_ids.call_args == mock.call(hostnames)
+    expected = {
+        'windows': [],
+    }
+    assert actual == expected
+
+
+@mock.patch('paasta_tools.paasta_maintenance.get_maintenance_schedule')
+@mock.patch('paasta_tools.paasta_maintenance.get_machine_ids')
+def test_build_maintenance_schedule_payload_schedule(
+    mock_get_machine_ids,
+    mock_get_maintenance_schedule,
+):
+    mock_get_maintenance_schedule.return_value.json.return_value = {
+        "windows": [
+            {
+                "machine_ids": [
+                    {"hostname": "machine1", "ip": "10.0.0.1"},
+                    {"hostname": "machine2", "ip": "10.0.0.2"}
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443830400000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            },
+            {
+                "machine_ids": [
+                    {"hostname": "machine3", "ip": "10.0.0.3"}
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443834000000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            }
+        ]
+    }
+    machine_ids = [{'hostname': 'machine2', 'ip': '10.0.0.2'}]
+    mock_get_machine_ids.return_value = machine_ids
+    hostnames = ['machine2']
+    start = '1443830400000000000'
+    duration = '3600000000000'
+    actual = build_maintenance_schedule_payload(hostnames, start, duration, drain=True)
+    assert mock_get_maintenance_schedule.call_count == 1
+    assert mock_get_machine_ids.call_count == 1
+    assert mock_get_machine_ids.call_args == mock.call(hostnames)
+    expected = {
+        "windows": [
+            {
+                "machine_ids": [
+                    {"hostname": "machine1", "ip": "10.0.0.1"},
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443830400000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            },
+            {
+                "machine_ids": [
+                    {"hostname": "machine3", "ip": "10.0.0.3"}
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443834000000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            },
+            {
+                "machine_ids": machine_ids,
+                "unavailability": {
+                    "start": {"nanoseconds": int(start)},
+                    "duration": {"nanoseconds": int(duration)}
+                }
+            }
+        ]
+    }
+    assert actual == expected
+
+
+@mock.patch('paasta_tools.paasta_maintenance.get_maintenance_schedule')
+@mock.patch('paasta_tools.paasta_maintenance.get_machine_ids')
+def test_build_maintenance_schedule_payload_schedule_undrain(
+    mock_get_machine_ids,
+    mock_get_maintenance_schedule,
+):
+    mock_get_maintenance_schedule.return_value.json.return_value = {
+        "windows": [
+            {
+                "machine_ids": [
+                    {"hostname": "machine1", "ip": "10.0.0.1"},
+                    {"hostname": "machine2", "ip": "10.0.0.2"}
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443830400000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            },
+            {
+                "machine_ids": [
+                    {"hostname": "machine3", "ip": "10.0.0.3"}
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443834000000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            }
+        ]
+    }
+    machine_ids = [{'hostname': 'machine2', 'ip': '10.0.0.2'}]
+    mock_get_machine_ids.return_value = machine_ids
+    hostnames = ['machine2']
+    start = '1443830400000000000'
+    duration = '3600000000000'
+    actual = build_maintenance_schedule_payload(hostnames, start, duration, drain=False)
+    assert mock_get_maintenance_schedule.call_count == 1
+    assert mock_get_machine_ids.call_count == 1
+    assert mock_get_machine_ids.call_args == mock.call(hostnames)
+    expected = {
+        "windows": [
+            {
+                "machine_ids": [
+                    {"hostname": "machine1", "ip": "10.0.0.1"},
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443830400000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            },
+            {
+                "machine_ids": [
+                    {"hostname": "machine3", "ip": "10.0.0.3"}
+                ],
+                "unavailability": {
+                    "start": {"nanoseconds": 1443834000000000000},
+                    "duration": {"nanoseconds": 3600000000000}
+                }
+            },
+        ]
+    }
+    assert actual == expected
 
 
 @mock.patch('paasta_tools.paasta_maintenance.open', create=True)
@@ -162,48 +353,121 @@ def test_load_credentials(
     assert load_credentials() == ('username', 'password')
 
 
-@mock.patch('paasta_tools.paasta_maintenance.requests.get')
-@mock.patch('paasta_tools.paasta_maintenance.load_credentials')
+@mock.patch('paasta_tools.paasta_maintenance.get_schedule_client')
 def test_get_maintenance_status(
-    mock_load_credentials,
-    mock_get,
+    mock_get_schedule_client,
 ):
-    leader = 'some.leader.org'
-    credentials = ('username', 'password')
-    mock_load_credentials.return_value = credentials
-    get_maintenance_status(leader)
-    endpoint = '/master/maintenance/status'
-    url = 'http://%s:%s%s' % (leader, PORT, endpoint)
-    assert mock_get.call_count == 1
-    assert mock_get.call_args == mock.call(url, auth=credentials, timeout=15)
+    get_maintenance_status()
+    assert mock_get_schedule_client.call_count == 1
+    assert mock_get_schedule_client.return_value.call_count == 1
+    assert mock_get_schedule_client.return_value.call_args == mock.call(method="GET", endpoint="status")
 
 
-@mock.patch('paasta_tools.paasta_maintenance.requests.get')
-@mock.patch('paasta_tools.paasta_maintenance.load_credentials')
+@mock.patch('paasta_tools.paasta_maintenance.get_schedule_client')
 def test_get_maintenance_schedule(
-    mock_load_credentials,
-    mock_get,
+    mock_get_schedule_client,
 ):
-    leader = 'some.leader.org'
-    credentials = ('username', 'password')
-    mock_load_credentials.return_value = credentials
-    get_maintenance_schedule(leader)
-    endpoint = '/master/maintenance/schedule'
-    url = 'http://%s:%s%s' % (leader, PORT, endpoint)
-    assert mock_get.call_count == 1
-    assert mock_get.call_args == mock.call(url, auth=credentials, timeout=15)
+    get_maintenance_schedule()
+    assert mock_get_schedule_client.call_count == 1
+    assert mock_get_schedule_client.return_value.call_count == 1
+    assert mock_get_schedule_client.return_value.call_args == mock.call(method="GET", endpoint="")
 
 
-@mock.patch('paasta_tools.paasta_maintenance.requests.post')
-@mock.patch('paasta_tools.paasta_maintenance.load_credentials')
-def test_send_payload(
-    mock_load_credentials,
-    mock_post,
+@mock.patch('paasta_tools.paasta_maintenance.get_schedule_client')
+@mock.patch('paasta_tools.paasta_maintenance.build_maintenance_schedule_payload')
+def test_drain(
+    mock_build_maintenance_schedule_payload,
+    mock_get_schedule_client,
 ):
-    credentials = ('username', 'password')
-    mock_load_credentials.return_value = credentials
-    url = 'http://some.leader.org:1234/some/endpoint'
-    payload = {'fake_key': 'fake_value'}
-    send_payload(url, payload)
-    assert mock_post.call_count == 1
-    assert mock_post.call_args == mock.call(url, data=json.dumps(payload), auth=credentials, timeout=15)
+    fake_schedule = {'fake_schedule': 'fake_value'}
+    mock_build_maintenance_schedule_payload.return_value = fake_schedule
+    drain(hostnames=['some-host'], start='some-start', duration='some-duration')
+    assert mock_build_maintenance_schedule_payload.call_count == 1
+    expected_args = mock.call(['some-host'], 'some-start', 'some-duration', drain=True)
+    assert mock_build_maintenance_schedule_payload.call_args == expected_args
+    assert mock_get_schedule_client.call_count == 1
+    assert mock_get_schedule_client.return_value.call_count == 1
+    expected_args = mock.call(method="POST", endpoint="", data=json.dumps(fake_schedule))
+    assert mock_get_schedule_client.return_value.call_args == expected_args
+
+
+@mock.patch('paasta_tools.paasta_maintenance.get_schedule_client')
+@mock.patch('paasta_tools.paasta_maintenance.build_maintenance_schedule_payload')
+def test_undrain(
+    mock_build_maintenance_schedule_payload,
+    mock_get_schedule_client,
+):
+    fake_schedule = {'fake_schedule': 'fake_value'}
+    mock_build_maintenance_schedule_payload.return_value = fake_schedule
+    undrain(hostnames=['some-host'], start='some-start', duration='some-duration')
+    assert mock_build_maintenance_schedule_payload.call_count == 1
+    expected_args = mock.call(['some-host'], 'some-start', 'some-duration', drain=False)
+    assert mock_build_maintenance_schedule_payload.call_args == expected_args
+    assert mock_get_schedule_client.call_count == 1
+    assert mock_get_schedule_client.return_value.call_count == 1
+    expected_args = mock.call(method="POST", endpoint="", data=json.dumps(fake_schedule))
+    assert mock_get_schedule_client.return_value.call_args == expected_args
+
+
+@mock.patch('paasta_tools.paasta_maintenance.master_api')
+@mock.patch('paasta_tools.paasta_maintenance.build_start_maintenance_payload')
+def test_down(
+    mock_build_start_maintenance_payload,
+    mock_master_api,
+):
+    fake_payload = [{'fake_schedule': 'fake_value'}]
+    mock_build_start_maintenance_payload.return_value = fake_payload
+    down(hostnames=['some-host'])
+    assert mock_build_start_maintenance_payload.call_count == 1
+    assert mock_build_start_maintenance_payload.call_args == mock.call(['some-host'])
+    assert mock_master_api.call_count == 1
+    assert mock_master_api.return_value.call_count == 1
+    expected_args = mock.call(method="POST", endpoint="machine/down", data=json.dumps(fake_payload))
+    assert mock_master_api.return_value.call_args == expected_args
+
+
+@mock.patch('paasta_tools.paasta_maintenance.master_api')
+@mock.patch('paasta_tools.paasta_maintenance.build_start_maintenance_payload')
+def test_up(
+    mock_build_start_maintenance_payload,
+    mock_master_api,
+):
+    fake_payload = [{'fake_schedule': 'fake_value'}]
+    mock_build_start_maintenance_payload.return_value = fake_payload
+    up(hostnames=['some-host'])
+    assert mock_build_start_maintenance_payload.call_count == 1
+    assert mock_build_start_maintenance_payload.call_args == mock.call(['some-host'])
+    assert mock_master_api.call_count == 1
+    assert mock_master_api.return_value.call_count == 1
+    expected_args = mock.call(method="POST", endpoint="machine/up", data=json.dumps(fake_payload))
+    assert mock_master_api.return_value.call_args == expected_args
+
+
+@mock.patch('sys.stdout', new_callable=StringIO)
+@mock.patch('paasta_tools.paasta_maintenance.get_maintenance_status')
+def test_status(
+    mock_get_maintenance_status,
+    mock_stdout,
+):
+    mock_get_maintenance_status.return_value.__str__ = mock.Mock()
+    mock_get_maintenance_status.return_value.__str__.return_value = 'fake_status'
+    mock_get_maintenance_status.return_value.text = 'fake_text'
+    status()
+    output = mock_stdout.getvalue()
+    assert mock_get_maintenance_status.call_count == 1
+    assert output == "fake_status:fake_text\n"
+
+
+@mock.patch('sys.stdout', new_callable=StringIO)
+@mock.patch('paasta_tools.paasta_maintenance.get_maintenance_schedule')
+def test_schedule(
+    mock_get_maintenance_schedule,
+    mock_stdout,
+):
+    mock_get_maintenance_schedule.return_value.__str__ = mock.Mock()
+    mock_get_maintenance_schedule.return_value.__str__.return_value = 'fake_status'
+    mock_get_maintenance_schedule.return_value.text = 'fake_text'
+    schedule()
+    output = mock_stdout.getvalue()
+    assert mock_get_maintenance_schedule.call_count == 1
+    assert output == "fake_status:fake_text\n"
